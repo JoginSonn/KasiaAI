@@ -1,0 +1,9 @@
+# Środowisko wirtualne Pythona
+.venv/
+__pycache__/
+
+# Plik z naszymi sekretami
+.env
+
+# Pliki VS Code
+.vscode/
