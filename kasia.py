@@ -91,8 +91,8 @@ def pobierz_odpowiedz_ai(tekst_uzytkownika):
 
     try:
         # Wysyłamy zapytanie do lokalnie działającego serwera Ollama
-        # Używamy modelu 'llama3:8b', który pobrałeś
-        response = ollama.chat(model='llama3:8b', messages=messages)
+        # Używamy modelu 'dolphin-mistral', który pobrałeś
+        response = ollama.chat(model='dolphin-mistral', messages=messages)
         
         # Wyciągamy sam tekst odpowiedzi
         odpowiedz_tekst = response['message']['content']
@@ -124,7 +124,7 @@ def mow_glos(tekst_do_powiedzenia):
     data = {
         "text": tekst_do_powiedzenia,
         "model_id": "eleven_multilingual_v2",
-        "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}
+        "voice_settings": {"stability": 0.5, "similarity_boost": 0.85, "speed": 1.25}
     }
 
     try:
