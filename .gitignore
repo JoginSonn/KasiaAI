@@ -10,9 +10,3 @@ __pycache__/
 
 # Folder z testowym audio
 temp_audio/
-
-# Private key
-.env
-
-# sprawdzenie które modele działaja
-sprawdz_modele.py

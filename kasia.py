@@ -3,38 +3,33 @@ import scipy.io.wavfile as wavfile
 import numpy as np
 import time
 import os
-import requests
+import requests # Używamy do API Whispera i ElevenLabs
 from dotenv import load_dotenv
-import google.generativeai as genai
-from elevenlabs.client import ElevenLabs
 import pygame # Używamy pygame do odtwarzania
+
+# --- NOWY IMPORT DLA LOKALNEGO "MÓZGU" ---
+import ollama
 
 # --- Ładowanie sekretów ---
 load_dotenv() 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
+# GOOGLE_API_KEY już niepotrzebny
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY") 
 
 WHISPER_API_URL = "https://api.openai.com/v1/audio/transcriptions"
 
 # --- Konfiguracja "Mózgu" (Gemini) ---
-if GOOGLE_API_KEY:
-    genai.configure(api_key=GOOGLE_API_KEY)
-    # Używamy nazwy modelu, którą znaleźliśmy
-    model_gemini = genai.GenerativeModel('models/gemini-pro-latest') 
-    print("Mózg (Gemini) pomyślnie skonfigurowany.")
-else:
-    print("BŁĄD: Nie znaleziono klucza GOOGLE_API_KEY. 'Mózg' nie będzie działać.")
-    model_gemini = None
+# WYRZUCILIŚMY CAŁY BLOK GEMINI. JESTEŚMY LOKALNI!
+print("Mózg (Lokalny - Ollama) gotowy.")
+
 
 # --- Konfiguracja "Głosu" (ElevenLabs) ---
 NAZWA_PLIKU_ODPOWIEDZI = os.path.join("temp_audio", "odpowiedz.mp3") 
-if ELEVENLABS_API_KEY:
-    client_elevenlabs = ElevenLabs(api_key=ELEVENLABS_API_KEY)
-    print("Głos (ElevenLabs) pomyślnie skonfigurowany.")
-else:
+if not ELEVENLABS_API_KEY:
     print("BŁĄD: Nie znaleziono klucza ELEVENLABS_API_KEY. 'Głos' nie będzie działać.")
-    client_elevenlabs = None
+else:
+    print("Głos (ElevenLabs) gotowy do użycia (tryb HTTP).")
+
 
 # --- Ustawienia Nagrywania ---
 SAMPLERATE = 44100
@@ -44,7 +39,7 @@ NAZWA_PLIKU_NAGRANIA = "nagranie_testowe.wav"
 SCIEZKA_PLIKU_NAGRANIA = os.path.join(FOLDER_NAGRAN, NAZWA_PLIKU_NAGRANIA)
 
 # --- Przełącznik Deweloperski ---
-TESTING_BEZ_NAGRYWANIA = True 
+TESTING_BEZ_NAGRYWANIA = False 
 
 def nagraj_audio(nazwa_pliku, czas_trwania_s, samplerate):
     """Nagrywa audio z domyślnego mikrofonu i zapisuje do pliku .wav."""
@@ -83,46 +78,61 @@ def transkrybuj_audio(nazwa_pliku):
         print(f"BŁĄD: Wystąpił problem z API OpenAI (Whisper): {e}")
         return None
 
+# --- NOWA FUNKCJA "MÓZG" (LOKALNA - OLLAMA) ---
 def pobierz_odpowiedz_ai(tekst_uzytkownika):
-    """Wysyła tekst do API Gemini i zwraca odpowiedź AI."""
-    if not model_gemini:
-         return "Błąd: Mózg nie jest podłączony."
-    print("Wysyłam tekst do 'Mózgu' (Gemini)...")
+    """Wysyła tekst do lokalnego modelu Ollama i zwraca odpowiedź AI."""
+    print("Wysyłam tekst do lokalnego 'Mózgu' (Ollama)...")
+    
+    # Tworzymy instrukcję systemową dla Kasi
+    messages = [
+        {'role': 'system', 'content': "Jesteś 'Kasia', pomocnym asystentem AI. Mówisz po polsku. Odpowiadaj zwięźle i bezpośrednio."},
+        {'role': 'user', 'content': tekst_uzytkownika}
+    ]
+
     try:
-        chat = model_gemini.start_chat(history=[])
-        # Dajemy mu prosty kontekst, żeby był bardziej jak asystent
-        instrukcja = "Jesteś 'Kasia', pomocnym asystentem AI. Odpowiadaj zwięźle i bezpośrednio."
-        response = chat.send_message(instrukcja + "\n\nUżytkownik: " + tekst_uzytkownika)
-        odpowiedz_tekst = response.text
+        # Wysyłamy zapytanie do lokalnie działającego serwera Ollama
+        # Używamy modelu 'llama3:8b', który pobrałeś
+        response = ollama.chat(model='llama3:8b', messages=messages)
+        
+        # Wyciągamy sam tekst odpowiedzi
+        odpowiedz_tekst = response['message']['content']
+        
         print(f"\nKasia (AI) mówi (tekst): >>> {odpowiedz_tekst} <<<")
         return odpowiedz_tekst
+        
     except Exception as e:
-        print(f"BŁĄD: Problem z API Gemini: {e}")
-        return "Błąd: Mózg nie odpowiada."
+        print(f"BŁĄD: Problem z lokalnym modelem Ollama: {e}")
+        print("UPEWNIJ SIĘ, ŻE OLLAMA JEST URUCHOMIONA W TLE!")
+        print("Upewnij się też, że pobrałeś model komendą 'ollama pull llama3:8b'")
+        return "Błąd: Mózg lokalny nie odpowiada."
 
-# --- ZAKTUALIZOWANA FUNKCJA "GŁOS" (UŻYWA TERAZ .text_to_speech.generate) ---
+# --- Funkcja "Głosu" (zostaje ta, która działała - V1.5) ---
 def mow_glos(tekst_do_powiedzenia):
-    """Wysyła tekst do ElevenLabs, zapisuje MP3 i odtwarza za pomocą pygame."""
-    if not client_elevenlabs:
+    """Generuje mowę z ElevenLabs (przez czyste API HTTP) i odtwarza z pygame."""
+    if not ELEVENLABS_API_KEY:
         print("BŁĄD: Klient ElevenLabs nie jest skonfigurowany.")
         return
 
-    print("Wysyłam tekst do 'Głosu' (ElevenLabs)...")
+    print("Wysyłam tekst do 'Głosu' (ElevenLabs - Metoda HTTP)...")
+    VOICE_ID = "NacdHGUYR1k3M0FAbAia" # ID Głosu "Rachel"
+    API_URL = f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}"
+    headers = {
+        "Accept": "audio/mpeg",
+        "Content-Type": "application/json",
+        "xi-api-key": ELEVENLABS_API_KEY
+    }
+    data = {
+        "text": tekst_do_powiedzenia,
+        "model_id": "eleven_multilingual_v2",
+        "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}
+    }
+
     try:
-        #
-        # --- OTO JEST OSTATECZNA POPRAWKA ---
-        #
-        audio = client_elevenlabs.text_to_speech.generate( # Musi być .text_to_speech
-            text=tekst_do_powiedzenia,
-            voice="Rachel", 
-            model="eleven_multilingual_v2"
-        )
-        #
-        # --- KONIEC POPRAWKI ---
-        #
-        
+        response = requests.post(API_URL, json=data, headers=headers)
+        response.raise_for_status() 
+
         with open(NAZWA_PLIKU_ODPOWIEDZI, 'wb') as f:
-            f.write(audio)
+            f.write(response.content)
         
         print(f"Głos zapisany jako: {NAZWA_PLIKU_ODPOWIEDZI}")
 
@@ -139,11 +149,12 @@ def mow_glos(tekst_do_powiedzenia):
         print("Odtwarzanie zakończone.")
 
     except Exception as e:
-        print(f"BŁĄD: Problem z API ElevenLabs lub odtwarzaniem pygame: {e}")
+        print(f"BŁĄD: Problem z API ElevenLabs (HTTP) lub odtwarzaniem pygame: {e}")
+
 
 # --- GŁÓWNA PĘTLA APLIKACJI ---
 if __name__ == "__main__":
-    print("Witaj w projekcie 'Kasia'. (Wersja 1.2: Słuch + Mózg + Głos [pygame])")
+    print("Witaj w projekcie 'Kasia'. (Wersja 2.0: Słuch API + Mózg LOKALNY + Głos API)")
 
     if not os.path.exists(FOLDER_NAGRAN):
         os.makedirs(FOLDER_NAGRAN)
@@ -166,8 +177,8 @@ if __name__ == "__main__":
         print(f"BŁĄD: Nie mogę znaleźć pliku {SCIEZKA_PLIKU_NAGRANIA}!")
         print("Uruchom program z TESTING_BEZ_NAGRYWANIA = False, aby go stworzyć.")
 
-    # --- KROK 3: MÓZG (GEMINI) ---
-    print("\n--- KROK 3: MÓZG (GEMINI) ---")
+    # --- KROK 3: MÓZG (LOKALNY - OLLAMA) ---
+    print("\n--- KROK 3: MÓZG (LOKALNY - OLLAMA) ---")
     odpowiedz_ai_tekst = None
     if tekst_uzytkownika:
         odpowiedz_ai_tekst = pobierz_odpowiedz_ai(tekst_uzytkownika)
