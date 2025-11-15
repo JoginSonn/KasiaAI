@@ -7,3 +7,6 @@ __pycache__/
 
 # Pliki VS Code
 .vscode/
+
+# Folder z testowym audio
+temp_audio/
