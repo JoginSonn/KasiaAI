@@ -1,29 +1,40 @@
+import os
+import sys
+import platform
+import time
+# HACK DLL USUNIĘTY - JUŻ GO NIE POTRZEBUJEMY
+
+# Reszta naszych normalnych importów
 import sounddevice as sd
 import scipy.io.wavfile as wavfile
 import numpy as np
-import time
-import os
-import requests # Używamy do API Whispera i ElevenLabs
+import requests
 from dotenv import load_dotenv
-import pygame # Używamy pygame do odtwarzania
+import pygame 
+import ollama 
 
-# --- NOWY IMPORT DLA LOKALNEGO "MÓZGU" ---
-import ollama
+# Importujemy whispera
+from faster_whisper import WhisperModel
 
 # --- Ładowanie sekretów ---
 load_dotenv() 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-# GOOGLE_API_KEY już niepotrzebny
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY") 
 
-WHISPER_API_URL = "https://api.openai.com/v1/audio/transcriptions"
-
-# --- Konfiguracja "Mózgu" (Gemini) ---
-# WYRZUCILIŚMY CAŁY BLOK GEMINI. JESTEŚMY LOKALNI!
+# --- Konfiguracja "Mózgu" (Lokalny - Ollama) ---
 print("Mózg (Lokalny - Ollama) gotowy.")
 
+# --- NOWA KONFIGURACJA "SŁUCHU" (LOKALNY - WERSJA CPU) ---
+print("Ładowanie lokalnego 'Słuchu' (faster-whisper) na CPU...")
+try:
+    # Używamy modelu "medium" na CPU, z optymalizacją "int8"
+    model_whisper = WhisperModel("medium", device="cpu", compute_type="int8")
+    print("Lokalny 'Słuch' załadowany i gotowy. (Tryb CPU)")
+except Exception as e:
+    print(f"BŁĄD KRYTYCZNY: Nie udało się załadować modelu Whisper: {e}")
+    exit() # Zamykamy skrypt, jeśli "Słuch" nie działa
 
-# --- Konfiguracja "Głosu" (ElevenLabs) ---
+
+# --- Konfiguracja "Głosu" (API - ElevenLabs) ---
 NAZWA_PLIKU_ODPOWIEDZI = os.path.join("temp_audio", "odpowiedz.mp3") 
 if not ELEVENLABS_API_KEY:
     print("BŁĄD: Nie znaleziono klucza ELEVENLABS_API_KEY. 'Głos' nie będzie działać.")
@@ -39,7 +50,7 @@ NAZWA_PLIKU_NAGRANIA = "nagranie_testowe.wav"
 SCIEZKA_PLIKU_NAGRANIA = os.path.join(FOLDER_NAGRAN, NAZWA_PLIKU_NAGRANIA)
 
 # --- Przełącznik Deweloperski ---
-TESTING_BEZ_NAGRYWANIA = False 
+TESTING_BEZ_NAGRYWANIA = True 
 
 def nagraj_audio(nazwa_pliku, czas_trwania_s, samplerate):
     """Nagrywa audio z domyślnego mikrofonu i zapisuje do pliku .wav."""
@@ -51,50 +62,36 @@ def nagraj_audio(nazwa_pliku, czas_trwania_s, samplerate):
     wavfile.write(nazwa_pliku, samplerate, nagranie)
     print(f"Nagranie zapisane jako: {nazwa_pliku}")
 
+# --- ZAKTUALIZOWANA FUNKCJA "SŁUCH" (LOKALNA - CPU) ---
 def transkrybuj_audio(nazwa_pliku):
-    """Wysyła plik audio do API Whisper i zwraca tekst."""
-    print(f"Wysyłam plik {nazwa_pliku} do transkrypcji ('Słuch')...")
-    if not OPENAI_API_KEY:
-        print("BŁĄD: Nie znaleziono klucza OPENAI_API_KEY.")
-        return None
-    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
-    files = {
-        'file': (nazwa_pliku, open(nazwa_pliku, 'rb'), 'audio/wav'),
-        'model': (None, 'whisper-1'),
-        'language': (None, 'pl')
-    }
+    """Przetwarza plik audio przez lokalny model faster-whisper (na CPU)."""
+    print(f"Przetwarzam plik {nazwa_pliku} przez lokalny 'Słuch' (CPU)...")
     try:
-        response = requests.post(WHISPER_API_URL, headers=headers, files=files)
-        response.raise_for_status() 
-        data = response.json()
-        tekst = data.get("text")
+        segments, info = model_whisper.transcribe(nazwa_pliku, language="pl")
+        tekst = "".join(segment.text for segment in segments)
+        
         if tekst:
-            print(f"\nWhisper usłyszał: >>> {tekst} <<<")
+            print(f"\nLokalny Whisper usłyszał: >>> {tekst} <<<")
             return tekst
         else:
-            print("BŁĄD: Nie udało się uzyskać tekstu z odpowiedzi API Whispera.")
+            print("BŁĄD: Lokalny Whisper nie zwrócił tekstu.")
             return None
-    except requests.exceptions.RequestException as e:
-        print(f"BŁĄD: Wystąpił problem z API OpenAI (Whisper): {e}")
+    except Exception as e:
+        print(f"BŁĄD: Wystąpił problem z lokalnym Whisperem: {e}")
         return None
 
-# --- NOWA FUNKCJA "MÓZG" (LOKALNA - OLLAMA) ---
+# --- Funkcja "Mózgu" (Lokalna - Ollama) ---
 def pobierz_odpowiedz_ai(tekst_uzytkownika):
     """Wysyła tekst do lokalnego modelu Ollama i zwraca odpowiedź AI."""
     print("Wysyłam tekst do lokalnego 'Mózgu' (Ollama)...")
     
-    # Tworzymy instrukcję systemową dla Kasi
     messages = [
         {'role': 'system', 'content': "Jesteś 'Kasia', pomocnym asystentem AI. Mówisz po polsku. Odpowiadaj zwięźle i bezpośrednio."},
         {'role': 'user', 'content': tekst_uzytkownika}
     ]
 
     try:
-        # Wysyłamy zapytanie do lokalnie działającego serwera Ollama
-        # Używamy modelu 'dolphin-mistral', który pobrałeś
-        response = ollama.chat(model='dolphin-mistral', messages=messages)
-        
-        # Wyciągamy sam tekst odpowiedzi
+        response = ollama.chat(model='llama3:8b', messages=messages) 
         odpowiedz_tekst = response['message']['content']
         
         print(f"\nKasia (AI) mówi (tekst): >>> {odpowiedz_tekst} <<<")
@@ -102,11 +99,9 @@ def pobierz_odpowiedz_ai(tekst_uzytkownika):
         
     except Exception as e:
         print(f"BŁĄD: Problem z lokalnym modelem Ollama: {e}")
-        print("UPEWNIJ SIĘ, ŻE OLLAMA JEST URUCHOMIONA W TLE!")
-        print("Upewnij się też, że pobrałeś model komendą 'ollama pull llama3:8b'")
         return "Błąd: Mózg lokalny nie odpowiada."
 
-# --- Funkcja "Głosu" (zostaje ta, która działała - V1.5) ---
+# --- Funkcja "Głosu" (API - ElevenLabs) ---
 def mow_glos(tekst_do_powiedzenia):
     """Generuje mowę z ElevenLabs (przez czyste API HTTP) i odtwarza z pygame."""
     if not ELEVENLABS_API_KEY:
@@ -114,7 +109,7 @@ def mow_glos(tekst_do_powiedzenia):
         return
 
     print("Wysyłam tekst do 'Głosu' (ElevenLabs - Metoda HTTP)...")
-    VOICE_ID = "NacdHGUYR1k3M0FAbAia" # ID Głosu "Rachel"
+    VOICE_ID = "NacdHGUYR1k3M0FAbAia" # Hanna
     API_URL = f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}"
     headers = {
         "Accept": "audio/mpeg",
@@ -124,7 +119,7 @@ def mow_glos(tekst_do_powiedzenia):
     data = {
         "text": tekst_do_powiedzenia,
         "model_id": "eleven_multilingual_v2",
-        "voice_settings": {"stability": 0.5, "similarity_boost": 0.85, "speed": 1.25}
+        "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}
     }
 
     try:
@@ -136,7 +131,6 @@ def mow_glos(tekst_do_powiedzenia):
         
         print(f"Głos zapisany jako: {NAZWA_PLIKU_ODPOWIEDZI}")
 
-        # Odtworzenie pliku audio za pomocą pygame
         print("Odtwarzam odpowiedź (pygame)...")
         pygame.mixer.init() 
         pygame.mixer.music.load(NAZWA_PLIKU_ODPOWIEDZI)
@@ -151,10 +145,9 @@ def mow_glos(tekst_do_powiedzenia):
     except Exception as e:
         print(f"BŁĄD: Problem z API ElevenLabs (HTTP) lub odtwarzaniem pygame: {e}")
 
-
 # --- GŁÓWNA PĘTLA APLIKACJI ---
 if __name__ == "__main__":
-    print("Witaj w projekcie 'Kasia'. (Wersja 2.0: Słuch API + Mózg LOKALNY + Głos API)")
+    print("Witaj w projekcie 'Kasia'. (Wersja 2.4: Słuch LOKALNY-CPU + Mózg LOKALNY + Głos API)")
 
     if not os.path.exists(FOLDER_NAGRAN):
         os.makedirs(FOLDER_NAGRAN)
@@ -168,8 +161,8 @@ if __name__ == "__main__":
         print("\n--- KROK 1: NAGRYWANIE (POMINIĘTE W TRYBIE TESTOWYM) ---")
         print(f"Używam istniejącego pliku: {SCIEZKA_PLIKU_NAGRANIA}")
 
-    # --- KROK 2: SŁUCH (WHISPER) ---
-    print("\n--- KROK 2: SŁUCH (WHISPER) ---")
+    # --- KROK 2: SŁUCH (LOKALNY - FASTER-WHISPER) ---
+    print("\n--- KROK 2: SŁUCH (LOKALNY - FASTER-WHISPER) ---")
     tekst_uzytkownika = None
     if os.path.exists(SCIEZKA_PLIKU_NAGRANIA):
         tekst_uzytkownika = transkrybuj_audio(SCIEZKA_PLIKU_NAGRANIA)
